@@ -187,5 +187,5 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-# database.txt
-database.txt
+# database.json
+database.json

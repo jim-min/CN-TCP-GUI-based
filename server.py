@@ -1,5 +1,6 @@
 import socket
 from multiprocessing import Process, freeze_support
+import json
 
 def parse_database(database):
     parsed = ''
@@ -47,6 +48,7 @@ def handle_client(connectionSocket, database):
                     connectionSocket.send('섹션 수만큼 제목이 입력되지 않았습니다'.encode())
                     continue
 
+                # 데이터 추가
                 li = []
                 for i in range(sections):
                     li.append([sec_titles[i], '빈 글입니다'])
