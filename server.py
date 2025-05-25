@@ -1,8 +1,27 @@
 import socket
-from multiprocessing import Process, freeze_support
+from multiprocessing import Process, freeze_support, Lock
 import json
 
-def parse_database(database):
+def load_database():
+    try:
+        with open('database.json', 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    except FileNotFoundError:
+        return {}
+
+def save_database(database):
+    try:
+        with open('database.json', 'w', encoding='utf-8') as f:
+            json.dump(database, f)
+
+    except Exception as e:
+        print(f"에러 발생, 에러: {e}")
+
+# read용 함수
+def parse_database():
+    database = load_database()
+    
     parsed = ''
     for key, value in database.items():
         parsed += key + '\n'
@@ -10,13 +29,13 @@ def parse_database(database):
             parsed += '    ' + str(idx+1) + ': ' + val + '\n'
     return parsed
 
-def handle_client(connectionSocket, database):
+def handle_client(connectionSocket, lock):
     try:
         while True:
             # 데이터를 주고받는 것으로 통신이 성립함
             raw_data = connectionSocket.recv(1024)
             if not raw_data:
-                print("Client disconnected")
+                print("종료")
                 break
                 
             sentence = raw_data.decode().strip()
@@ -33,12 +52,14 @@ def handle_client(connectionSocket, database):
                     connectionSocket.send('명령어의 구조를 확인해주세요'.encode())
                     continue
 
-                # 명령어 형태 ok
+                # 명령어 형태 ok일 시
                 d_title = command[1]
                 sections = int(command[2])
                 sec_titles = command[3:]
 
-                # 이미 존재하는 데이터
+                database = load_database()
+
+                # 이미 존재하는 데이터인지 확인
                 if d_title in database:
                     connectionSocket.send('이미 존재하는 데이터입니다'.encode())
                     continue
@@ -49,63 +70,78 @@ def handle_client(connectionSocket, database):
                     continue
 
                 # 데이터 추가
-                li = []
+                database[d_title] = {}
                 for i in range(sections):
-                    li.append([sec_titles[i], '빈 글입니다'])
+                    database[d_title][sec_titles[i]] = '빈 글입니다'
 
-                database.append([d_title, li])
+                save_database(database)
 
                 connectionSocket.send('생성 완료'.encode())
 
             elif command[0] == 'read':
                 # read만 받았을 경우
                 if command == ['read']:
+                    database = load_database()
                     if not database:
                         connectionSocket.send('No Data'.encode())
                     else:
-                        connectionSocket.send(parse_database(database).encode())
+                        connectionSocket.send(parse_database().encode())
 
                 # read <d_title> <s_title> 받았을 경우 
                 elif len(command) == 3:
+                    database = load_database()
                     if command[1] not in database:
                         connectionSocket.send('No Data'.encode())
-                    # else:
-                    #     if command[2] not in database[command[1]]:
-                    #         connectionSocket.send('No Data'.encode())
-                    #     else:
-                    #         connectionSocket.send(database[command[1]][command[2]].encode())
+                    else:
+                        if command[2] not in database[command[1]]:
+                            connectionSocket.send('No Data'.encode())
+                        else:
+                            connectionSocket.send(database[command[1]][command[2]].encode())
 
             # write <d_title> <s_title> <content>
             elif command[0] == 'write':
-                if len(command) < 4:
+                if len(command) < 3:
                     connectionSocket.send('명령어의 구조를 확인해주세요'.encode())
                     continue
 
+                database = load_database()
+                # 수정 중 lock
+                lock.acquire()
+
                 d_title = command[1]
                 section = command[2]
-                content = ' '.join(command[3:])
 
                 if d_title in database and section in database[d_title]:
+                    connectionSocket.send('수정할 내용을 입력해주세요'.encode())
+
+                    # 수정 내용 받음
+                    raw_data = connectionSocket.recv(1024)
+                    content = raw_data.decode().strip()
+                    
                     database[d_title][section] = content
+                    save_database(database)
+                    lock.release()
                     connectionSocket.send('수정 완료'.encode())
+
                 else:
+                    lock.release()
                     connectionSocket.send('해당하는 데이터가 없습니다.'.encode())
             
             # bye
             elif command[0] == 'bye':
-                connectionSocket.send('종료'.encode())
                 break
                 
             else:
                 connectionSocket.send('알 수 없는 명령어입니다. 종료하려면 bye를 입력하세요.'.encode())
                 
     except Exception as e:
-        print(f"Error handling client: {e}")
+        print(f"오류로 연결을 종료합니다. 오류 내용: {e}")
 
     finally:
         # 에러 시 또는 bye 받을 시 연결 종료
+        connectionSocket.send('종료'.encode())
         connectionSocket.close()
-        print("Connection closed")
+        print("연결 종료되었음")
 
 def main():
     serverPort = 8080
@@ -118,8 +154,6 @@ def main():
     # 대기 중인 요청(backlog)의 수 : 10개로 제한
     serverSocket.listen(10)
 
-    database = []    
-    
     print("서버 실행 중...")
 
     try:
@@ -127,9 +161,11 @@ def main():
             connectionSocket, addr = serverSocket.accept()
             print(f'{addr}에서 접속하였습니다')
 
+            lock = Lock()
             # 각 클라이언트 연결을 별도의 프로세스로 처리
-            client_process = Process(target=handle_client, args=(connectionSocket, database))
+            client_process = Process(target=handle_client, args=(connectionSocket, lock))
             client_process.start()
+
 
     except KeyboardInterrupt:
         print("\n서버를 직접 종료합니다")

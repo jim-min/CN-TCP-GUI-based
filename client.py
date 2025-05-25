@@ -24,5 +24,12 @@ while True:
     modifiedSentence = clientSocket.recv(1024)
     print(modifiedSentence.decode())
 
+    if modifiedSentence.decode() == '수정할 내용을 입력해주세요':
+        content = input('수정할 내용 : ')
+        clientSocket.send(content.encode())
+
+        modifiedSentence = clientSocket.recv(1024)
+        print(modifiedSentence.decode())
+
     if modifiedSentence.decode() == '종료':
         break
