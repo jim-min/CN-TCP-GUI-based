@@ -1,6 +1,7 @@
 import socket
-from multiprocessing import Process, freeze_support, Lock
+from multiprocessing import Process, freeze_support, Manager
 import json
+import hashlib
 
 def load_database():
     try:
@@ -28,11 +29,17 @@ def parse_database():
     parsed = ''
     for key, value in database.items():
         parsed += key + '\n'
-        for idx, val in enumerate(value):
-            parsed += '    ' + str(idx+1) + ': ' + val + '\n'
+        for idx, (section_name, content) in enumerate(value.items()):
+            parsed += f'    {idx+1}: {section_name}\n'
     return parsed
 
-def handle_client(connectionSocket, write_lock):
+def get_lock_index(document_section_key, num_locks):
+    # 문서:섹션 키를 기반으로 일관된 락 인덱스 반환
+
+    hash_value = hashlib.sha256(document_section_key.encode()).hexdigest()
+    return int(hash_value, 16) % num_locks
+
+def handle_client(connectionSocket, lock_pool):
     try:
         while True:
             # 데이터를 주고받는 것으로 통신이 성립함
@@ -79,7 +86,7 @@ def handle_client(connectionSocket, write_lock):
                 # 데이터 추가
                 database[d_title] = {}
                 for i in range(sections):
-                    database[d_title][sec_titles[i]] = '빈 글입니다'
+                    database[d_title][sec_titles[i]] = ''
 
                 save_database(database)
 
@@ -119,11 +126,13 @@ def handle_client(connectionSocket, write_lock):
                     connectionSocket.send('해당하는 데이터가 없습니다.'.encode())
                     continue
 
-                # 섹션별 락 획득 시도
-                if not write_lock.acquire():
-                    connectionSocket.send('다른 사용자가 해당 섹션을 수정 중입니다. 잠시 후 다시 시도해주세요.'.encode())
-                    continue
+                # 각 문서-섹션 조합마다 고유한 키 생성
+                lock_key = f"{d_title}:{section}"
                 
+                # 키마다 고유한 락 인덱스 반환 (하지만 100가지 수밖에 없음)
+                lock_index = get_lock_index(lock_key, len(lock_pool))
+                lock = lock_pool[lock_index]
+
                 try:
                     connectionSocket.send('수정할 내용을 입력해주세요:'.encode())
 
@@ -137,11 +146,11 @@ def handle_client(connectionSocket, write_lock):
                         database[d_title][section] = content
                         save_database(database)
                         connectionSocket.send('수정 완료'.encode())
+                        
                     else:
                         connectionSocket.send('데이터가 존재하지 않거나 삭제되었습니다.'.encode())
                 finally:
-                    # 작업이 완료되면 반드시 Lock 해제
-                    write_lock.release()
+                    lock.release()
                     
             # bye
             elif command[0] == 'bye':
@@ -171,16 +180,18 @@ def main():
 
     print("서버 실행 중...")
 
-    # 프로세스 간 공유 가능한 Manager 생성
     try:
-        write_lock = Lock()
-        while True:
-            connectionSocket, addr = serverSocket.accept()
-            print(f'{addr}에서 접속하였습니다')
+        with Manager() as manager:
+            # 더 많은 락 풀 생성 (100개로 충돌 확률 크게 줄임)
+            lock_pool = [manager.Lock() for _ in range(100)]
+            
+            while True:
+                connectionSocket, addr = serverSocket.accept()
+                print(f'{addr}에서 접속하였습니다')
 
-            # 각 클라이언트 연결을 별도의 프로세스로 처리
-            client_process = Process(target=handle_client, args=(connectionSocket, write_lock))
-            client_process.start()
+                # 각 클라이언트 연결을 별도의 프로세스로 처리
+                client_process = Process(target=handle_client, args=(connectionSocket, lock_pool))
+                client_process.start()
 
     except KeyboardInterrupt:
         print("\n서버를 직접 종료합니다")
