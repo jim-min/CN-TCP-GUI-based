@@ -1,5 +1,5 @@
 import socket
-from multiprocessing import Process, freeze_support, Manager
+from multiprocessing import Process, freeze_support, Lock
 import json
 
 def load_database():
@@ -119,13 +119,13 @@ def handle_client(connectionSocket, write_lock):
                     connectionSocket.send('해당하는 데이터가 없습니다.'.encode())
                     continue
 
-                # Lock 획득 시도 (non-blocking)
+                # 섹션별 락 획득 시도
                 if not write_lock.acquire():
-                    connectionSocket.send(f'다른 사용자가 {d_title}의 {section} 섹션을 수정 중입니다. 잠시 후 다시 시도해주세요.'.encode())
+                    connectionSocket.send('다른 사용자가 해당 섹션을 수정 중입니다. 잠시 후 다시 시도해주세요.'.encode())
                     continue
-
+                
                 try:
-                    connectionSocket.send('수정할 내용을 입력해주세요'.encode())
+                    connectionSocket.send('수정할 내용을 입력해주세요:'.encode())
 
                     # 수정 내용 받음
                     raw_data = connectionSocket.recv(1024)
@@ -172,23 +172,21 @@ def main():
     print("서버 실행 중...")
 
     # 프로세스 간 공유 가능한 Manager 생성
-    with Manager() as manager:
-        write_lock = manager.Lock()
-        
-        try:
-            while True:
-                connectionSocket, addr = serverSocket.accept()
-                print(f'{addr}에서 접속하였습니다')
+    try:
+        write_lock = Lock()
+        while True:
+            connectionSocket, addr = serverSocket.accept()
+            print(f'{addr}에서 접속하였습니다')
 
-                # 각 클라이언트 연결을 별도의 프로세스로 처리
-                client_process = Process(target=handle_client, args=(connectionSocket, write_lock))
-                client_process.start()
+            # 각 클라이언트 연결을 별도의 프로세스로 처리
+            client_process = Process(target=handle_client, args=(connectionSocket, write_lock))
+            client_process.start()
 
-        except KeyboardInterrupt:
-            print("\n서버를 직접 종료합니다")
-        finally:
-            serverSocket.close()
-            print("서버를 종료")
+    except KeyboardInterrupt:
+        print("\n서버를 직접 종료합니다")
+    finally:
+        serverSocket.close()
+        print("서버를 종료")
 
 if __name__ == '__main__':
     freeze_support()
