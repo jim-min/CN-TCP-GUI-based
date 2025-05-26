@@ -33,13 +33,14 @@ def parse_database():
             parsed += f'    {idx+1}: {section_name}\n'
     return parsed
 
-def get_lock_index(document_section_key, num_locks):
-    # 문서:섹션 키를 기반으로 일관된 락 인덱스 반환
+def get_lock_index(key, num_locks):
+    # 문서:섹션 키를 기반으로 락 인덱스 만들어 반환
+    # 서로 다른 섹션끼리 락이 충돌할 가능성은 있으나 같은 섹션이 서로 락이 안 걸릴 가능성은 없음
 
-    hash_value = hashlib.sha256(document_section_key.encode()).hexdigest()
+    hash_value = hashlib.sha256(key.encode()).hexdigest()
     return int(hash_value, 16) % num_locks
 
-def handle_client(connectionSocket, lock_pool):
+def handle_client(connectionSocket, lock_list):
     try:
         while True:
             # 데이터를 주고받는 것으로 통신이 성립함
@@ -110,7 +111,13 @@ def handle_client(connectionSocket, lock_pool):
                         if command[2] not in database[command[1]]:
                             connectionSocket.send('No Data'.encode())
                         else:
+                            if database[command[1]][command[2]] == '':
+                                connectionSocket.send('빈 글입니다'.encode())
+
                             connectionSocket.send(database[command[1]][command[2]].encode())
+
+                else:
+                    connectionSocket.send('명령어의 구조를 확인해주세요'.encode())
 
             # write <d_title> <s_title> <content>
             elif command[0] == 'write':
@@ -130,8 +137,10 @@ def handle_client(connectionSocket, lock_pool):
                 lock_key = f"{d_title}:{section}"
                 
                 # 키마다 고유한 락 인덱스 반환 (하지만 100가지 수밖에 없음)
-                lock_index = get_lock_index(lock_key, len(lock_pool))
-                lock = lock_pool[lock_index]
+                lock_index = get_lock_index(lock_key, len(lock_list))
+                lock = lock_list[lock_index]
+
+                lock.acquire()
 
                 try:
                     connectionSocket.send('수정할 내용을 입력해주세요:'.encode())
@@ -182,15 +191,15 @@ def main():
 
     try:
         with Manager() as manager:
-            # 더 많은 락 풀 생성 (100개로 충돌 확률 크게 줄임)
-            lock_pool = [manager.Lock() for _ in range(100)]
+            # 락을 100개 만들어서 
+            lock_list = [manager.Lock() for _ in range(100)]
             
             while True:
                 connectionSocket, addr = serverSocket.accept()
                 print(f'{addr}에서 접속하였습니다')
 
                 # 각 클라이언트 연결을 별도의 프로세스로 처리
-                client_process = Process(target=handle_client, args=(connectionSocket, lock_pool))
+                client_process = Process(target=handle_client, args=(connectionSocket, lock_list))
                 client_process.start()
 
     except KeyboardInterrupt:
