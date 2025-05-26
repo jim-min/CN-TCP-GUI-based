@@ -1,5 +1,5 @@
 import socket
-from multiprocessing import Process, freeze_support, Lock
+from multiprocessing import Process, freeze_support, Manager
 import json
 
 def load_database():
@@ -8,6 +8,9 @@ def load_database():
             return json.load(f)
 
     except FileNotFoundError:
+        with open('database.json', 'w', encoding='utf-8') as f:
+            json.dump({}, f)
+
         return {}
 
 def save_database(database):
@@ -29,7 +32,7 @@ def parse_database():
             parsed += '    ' + str(idx+1) + ': ' + val + '\n'
     return parsed
 
-def handle_client(connectionSocket, lock):
+def handle_client(connectionSocket, write_lock):
     try:
         while True:
             # 데이터를 주고받는 것으로 통신이 성립함
@@ -59,6 +62,10 @@ def handle_client(connectionSocket, lock):
 
                 database = load_database()
 
+                if len(database) > 10 :
+                    connectionSocket.send('최대 10개의 문서만 생성할 수 있습니다'.encode())
+                    continue
+                
                 # 이미 존재하는 데이터인지 확인
                 if d_title in database:
                     connectionSocket.send('이미 존재하는 데이터입니다'.encode())
@@ -105,28 +112,37 @@ def handle_client(connectionSocket, lock):
                     continue
 
                 database = load_database()
-                # 수정 중 lock
-                lock.acquire()
-
                 d_title = command[1]
                 section = command[2]
 
-                if d_title in database and section in database[d_title]:
+                if d_title not in database or section not in database[d_title]:
+                    connectionSocket.send('해당하는 데이터가 없습니다.'.encode())
+                    continue
+
+                # Lock 획득 시도 (non-blocking)
+                if not write_lock.acquire():
+                    connectionSocket.send(f'다른 사용자가 {d_title}의 {section} 섹션을 수정 중입니다. 잠시 후 다시 시도해주세요.'.encode())
+                    continue
+
+                try:
                     connectionSocket.send('수정할 내용을 입력해주세요'.encode())
 
                     # 수정 내용 받음
                     raw_data = connectionSocket.recv(1024)
                     content = raw_data.decode().strip()
                     
-                    database[d_title][section] = content
-                    save_database(database)
-                    lock.release()
-                    connectionSocket.send('수정 완료'.encode())
-
-                else:
-                    lock.release()
-                    connectionSocket.send('해당하는 데이터가 없습니다.'.encode())
-            
+                    # 데이터베이스 다시 로드 (Lock을 얻은 후 최신 데이터 확인)
+                    database = load_database()
+                    if d_title in database and section in database[d_title]:
+                        database[d_title][section] = content
+                        save_database(database)
+                        connectionSocket.send('수정 완료'.encode())
+                    else:
+                        connectionSocket.send('데이터가 존재하지 않거나 삭제되었습니다.'.encode())
+                finally:
+                    # 작업이 완료되면 반드시 Lock 해제
+                    write_lock.release()
+                    
             # bye
             elif command[0] == 'bye':
                 break
@@ -151,27 +167,28 @@ def main():
     serverSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 3)
     serverSocket.bind(('', serverPort))
 
-    # 대기 중인 요청(backlog)의 수 : 10개로 제한
     serverSocket.listen(10)
 
     print("서버 실행 중...")
 
-    try:
-        while True:
-            connectionSocket, addr = serverSocket.accept()
-            print(f'{addr}에서 접속하였습니다')
+    # 프로세스 간 공유 가능한 Manager 생성
+    with Manager() as manager:
+        write_lock = manager.Lock()
+        
+        try:
+            while True:
+                connectionSocket, addr = serverSocket.accept()
+                print(f'{addr}에서 접속하였습니다')
 
-            lock = Lock()
-            # 각 클라이언트 연결을 별도의 프로세스로 처리
-            client_process = Process(target=handle_client, args=(connectionSocket, lock))
-            client_process.start()
+                # 각 클라이언트 연결을 별도의 프로세스로 처리
+                client_process = Process(target=handle_client, args=(connectionSocket, write_lock))
+                client_process.start()
 
-
-    except KeyboardInterrupt:
-        print("\n서버를 직접 종료합니다")
-    finally:
-        serverSocket.close()
-        print("서버를 종료")
+        except KeyboardInterrupt:
+            print("\n서버를 직접 종료합니다")
+        finally:
+            serverSocket.close()
+            print("서버를 종료")
 
 if __name__ == '__main__':
     freeze_support()
