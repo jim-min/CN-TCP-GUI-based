@@ -6,8 +6,11 @@ if len(sys.argv) > 1:
 else:
     clientPort = 8081
 
-serverName = 'localhost'
-serverPort = 8080
+with open('config.txt', 'r') as f:
+    config = f.read().split()
+    serverName = config[2]
+    serverPort = int(config[3])
+
 clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 clientSocket.bind(('', clientPort))
 clientSocket.connect((serverName, serverPort))
