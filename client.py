@@ -36,5 +36,6 @@ while True:
         modifiedSentence = clientSocket.recv(1024)
         print(modifiedSentence.decode())
 
+    # FIN
     if modifiedSentence.decode() == '종료':
         break

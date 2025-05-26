@@ -2,6 +2,7 @@ import socket
 from multiprocessing import Process, freeze_support, Manager
 import json
 import hashlib
+import sys
 
 def load_database():
     try:
@@ -178,7 +179,10 @@ def handle_client(connectionSocket, lock_list):
         print("연결 종료되었음")
 
 def main():
-    serverPort = 8080
+    if len(sys.argv) > 1:
+        serverPort = int(sys.argv[1])
+    else:
+        serverPort = 8080
     
     # 서버 소켓 생성
     serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
