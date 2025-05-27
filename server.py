@@ -81,7 +81,7 @@ def handle_client(connectionSocket, lock_list, conn_count, last_zero_time):
                 continue
 
             # create <d_title> <s_#> <s_title1> ... <sk_title>
-            if command[0] == 'create':
+            if command[0].lower() == 'create':
                 # 명령어가 완벽하지 않음
                 if len(command) < 4:
                     connectionSocket.send('명령어의 구조를 확인해주세요'.encode())
@@ -121,7 +121,7 @@ def handle_client(connectionSocket, lock_list, conn_count, last_zero_time):
 
                 connectionSocket.send('생성 완료'.encode())
 
-            elif command[0] == 'read':
+            elif command[0].lower() == 'read':
                 # read만 받았을 경우
                 if command == ['read']:
                     database = load_database()
@@ -148,7 +148,7 @@ def handle_client(connectionSocket, lock_list, conn_count, last_zero_time):
                     connectionSocket.send('명령어의 구조를 확인해주세요'.encode())
 
             # write <d_title> <s_title> <content>
-            elif command[0] == 'write':
+            elif command[0].lower() == 'write':
                 if len(command) < 3:
                     connectionSocket.send('명령어의 구조를 확인해주세요'.encode())
                     continue
@@ -194,7 +194,7 @@ def handle_client(connectionSocket, lock_list, conn_count, last_zero_time):
                     lock.release()
                     
             # bye
-            elif command[0] == 'bye':
+            elif command[0].lower() == 'bye':
                 break
                 
             else:
@@ -234,8 +234,10 @@ def main():
         with Manager() as manager:
             # 락을 100개 만들어서 해시 % 100을 인덱스로 씀
             lock_list = [manager.Lock() for _ in range(100)]
-            conn_count = manager.Value('i', 0)  # 접속자 수
-            last_zero_time = manager.Value('i', 0)  # 마지막으로 0명이 된 시각 (0이면 접속자 있거나 서버 처음 실행한 상황)
+            # 접속자 수
+            conn_count = manager.Value('i', 0) 
+            # 마지막으로 0명이 된 시각 (0이면 접속자 있거나 서버 처음 실행한 상황)
+            last_zero_time = manager.Value('i', 0)
             
             while True:
                 # 10분 타임아웃 체크
