@@ -243,12 +243,14 @@ def main():
                         print("10분간 접속자가 없어 서버를 종료합니다.")
                         break
 
+                # serverSocket.accept()의 데드락을 피하기 위해 timeout 설정
+                # 이를 통해 Ctrl+C로 서버를 종료할 수 있음
                 serverSocket.settimeout(1.0)
                 try:
                     connectionSocket, addr = serverSocket.accept()
                 except socket.timeout:
                     continue
-                
+
                 print(f'{addr}에서 접속하였습니다')
 
                 # 각 클라이언트 연결을 별도의 프로세스로 처리
