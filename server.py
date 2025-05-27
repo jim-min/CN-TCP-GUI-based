@@ -3,6 +3,7 @@ from multiprocessing import Process, freeze_support, Manager
 import json
 import hashlib
 import sys
+import time
 
 def load_database():
     try:
@@ -23,8 +24,8 @@ def save_database(database):
     except Exception as e:
         print(f"에러 발생, 에러: {e}")
 
-# read용 함수
 def parse_database():
+    # read용 함수
     database = load_database()
     
     parsed = ''
@@ -41,8 +42,28 @@ def get_lock_index(key, num_locks):
     hash_value = hashlib.sha256(key.encode()).hexdigest()
     return int(hash_value, 16) % num_locks
 
-def handle_client(connectionSocket, lock_list):
+def check_titles_validity(d_title, sec_titles):
+    # 섹션 제목이 중복되거나 섹션, 문서 제목 64바이트 넘어가면 False
+    if len(d_title.encode('utf-8')) > 64:
+        return False
+    
+    if len(set(sec_titles)) != len(sec_titles):
+        return False
+
+    for title in sec_titles:
+        if len(title.encode('utf-8')) > 64:
+            return False
+    
+    return True
+
+def handle_client(connectionSocket, lock_list, conn_count, last_zero_time):
     try:
+        # 접속자 수 증가
+        conn_count.value += 1
+        # 0명에서 1명으로 늘어난 경우 타이머 초기화
+        if conn_count.value == 1:
+            last_zero_time.value = 0
+        
         while True:
             # 데이터를 주고받는 것으로 통신이 성립함
             raw_data = connectionSocket.recv(1024)
@@ -68,6 +89,10 @@ def handle_client(connectionSocket, lock_list):
                 d_title = command[1]
                 sections = int(command[2])
                 sec_titles = command[3:]
+
+                if not check_titles_validity(d_title, sec_titles):
+                    connectionSocket.send('섹션 제목이 중복되거나 섹션, 문서 제목이 64바이트 초과입니다'.encode())
+                    continue
 
                 database = load_database()
 
@@ -99,7 +124,7 @@ def handle_client(connectionSocket, lock_list):
                 if command == ['read']:
                     database = load_database()
                     if not database:
-                        connectionSocket.send('No Data'.encode())
+                        connectionSocket.send('글이 없습니다'.encode())
                     else:
                         connectionSocket.send(parse_database().encode())
 
@@ -107,10 +132,10 @@ def handle_client(connectionSocket, lock_list):
                 elif len(command) == 3:
                     database = load_database()
                     if command[1] not in database:
-                        connectionSocket.send('No Data'.encode())
+                        connectionSocket.send('없는 글입니다'.encode())
                     else:
                         if command[2] not in database[command[1]]:
-                            connectionSocket.send('No Data'.encode())
+                            connectionSocket.send('없는 섹션입니다'.encode())
                         else:
                             if database[command[1]][command[2]] == '':
                                 connectionSocket.send('빈 글입니다'.encode())
@@ -137,18 +162,22 @@ def handle_client(connectionSocket, lock_list):
                 # 각 문서-섹션 조합마다 고유한 키 생성
                 lock_key = f"{d_title}:{section}"
                 
-                # 키마다 고유한 락 인덱스 반환 (하지만 100가지 수밖에 없음)
+                # 키마다 고유한 락 인덱스 반환 (하지만 100가지 경우밖에 없음)
                 lock_index = get_lock_index(lock_key, len(lock_list))
                 lock = lock_list[lock_index]
 
                 lock.acquire()
 
                 try:
-                    connectionSocket.send('수정할 내용을 입력해주세요:'.encode())
+                    connectionSocket.send('수정할 내용을 3줄에 걸쳐 입력해주세요:'.encode())
 
                     # 수정 내용 받음
                     raw_data = connectionSocket.recv(1024)
                     content = raw_data.decode().strip()
+                    
+                    if len(content.encode('utf-8')) > 640:
+                        connectionSocket.send('640바이트 초과입니다'.encode())
+                        continue
                     
                     # 데이터베이스 다시 로드 (Lock을 얻은 후 최신 데이터 확인)
                     database = load_database()
@@ -176,6 +205,12 @@ def handle_client(connectionSocket, lock_list):
         # 에러 시 또는 bye 받을 시 연결 종료
         connectionSocket.send('종료'.encode())
         connectionSocket.close()
+
+        # 접속자 수 감소
+        conn_count.value -= 1
+        if conn_count.value == 0:
+            last_zero_time.value = int(time.time())
+
         print("연결 종료되었음")
 
 def main():
@@ -195,15 +230,29 @@ def main():
 
     try:
         with Manager() as manager:
-            # 락을 100개 만들어서 
+            # 락을 100개 만들어서 해시 % 100을 인덱스로 씀
             lock_list = [manager.Lock() for _ in range(100)]
+            conn_count = manager.Value('i', 0)  # 접속자 수
+            last_zero_time = manager.Value('i', 0)  # 마지막으로 0명이 된 시각 (0이면 접속자 有)
             
             while True:
-                connectionSocket, addr = serverSocket.accept()
+                # 10분 타임아웃 체크
+                if conn_count.value == 0 and last_zero_time.value != 0:
+                    now = int(time.time())
+                    if now - last_zero_time.value >= 600:
+                        print("10분간 접속자가 없어 서버를 종료합니다.")
+                        break
+
+                serverSocket.settimeout(1.0)
+                try:
+                    connectionSocket, addr = serverSocket.accept()
+                except socket.timeout:
+                    continue
+                
                 print(f'{addr}에서 접속하였습니다')
 
                 # 각 클라이언트 연결을 별도의 프로세스로 처리
-                client_process = Process(target=handle_client, args=(connectionSocket, lock_list))
+                client_process = Process(target=handle_client, args=(connectionSocket, lock_list, conn_count, last_zero_time))
                 client_process.start()
 
     except KeyboardInterrupt:

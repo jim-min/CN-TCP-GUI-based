@@ -27,7 +27,7 @@ while True:
     modifiedSentence = clientSocket.recv(1024)
     print(modifiedSentence.decode())
 
-    if modifiedSentence.decode() == '수정할 내용을 입력해주세요:':
+    if modifiedSentence.decode() == '수정할 내용을 3줄에 걸쳐 입력해주세요:':
         # 3줄 받음
         content1 = input()
         content2 = input()
