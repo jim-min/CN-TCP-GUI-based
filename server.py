@@ -67,6 +67,8 @@ def handle_client(connectionSocket, lock_list, conn_count, last_zero_time):
         while True:
             # 데이터를 주고받는 것으로 통신이 성립함
             raw_data = connectionSocket.recv(1024)
+
+            # 데이터가 안 오는 오류가 발생한 경우 연결 종료
             if not raw_data:
                 print("종료")
                 break
@@ -233,7 +235,7 @@ def main():
             # 락을 100개 만들어서 해시 % 100을 인덱스로 씀
             lock_list = [manager.Lock() for _ in range(100)]
             conn_count = manager.Value('i', 0)  # 접속자 수
-            last_zero_time = manager.Value('i', 0)  # 마지막으로 0명이 된 시각 (0이면 접속자 有)
+            last_zero_time = manager.Value('i', 0)  # 마지막으로 0명이 된 시각 (0이면 접속자 있거나 서버 처음 실행한 상황)
             
             while True:
                 # 10분 타임아웃 체크
